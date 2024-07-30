@@ -4,49 +4,54 @@ use std::env;
 
 use aws_config::BehaviorVersion;
 use aws_sdk_dynamodb::Client;
-use lambda_http::{run, service_fn, tracing::{self}, Body, Error, Request, RequestExt, Response};
+use axum::{http::StatusCode, routing::get, extract::Query , Json, Router};
+use lambda_http::{run, Error};
+//use lambda_http::tracing::{self};
 
 pub mod storeuser;
 pub mod jwt;
 
+use serde::Deserialize;
 use storeuser::try_get_user;
 use jwt::build_jwt;
 
-async fn handle_request(client: &Client, event: Request) -> Result<Response<Body>, Error> {
-    let params = event.query_string_parameters();
-    let username = params.first("username").unwrap_or_default().to_string();
-    let password = params.first("password").unwrap_or_default().to_string();
+#[derive(Deserialize)]
+struct LoginPayload {
+    username: String,
+    password: String
+}
 
-    let user = match try_get_user(client, username).await {
+async fn post_login(Json(payload): Json<LoginPayload>) -> (StatusCode, String) {
+    let username = payload.username;
+    let password = payload.password;
+
+    verify_login(username, password).await
+}
+
+async fn get_login(payload: Query<LoginPayload>) -> (StatusCode, String) {
+    let username = payload.0.username;
+    let password = payload.0.password;
+    verify_login(username, password).await
+}
+
+async fn verify_login(username: String, password: String) -> (StatusCode, String) {
+    let client = get_dynamodb_client().await;
+
+    let user = match try_get_user(&client, username).await {
         Ok(user) => user,
-        Err(aws_sdk_dynamodb::Error::Unhandled(_)) => return Ok(build_response(500, "Unexpected server error".to_string())),
-        Err(_) => return Ok(build_response(403, "Wrong username or password".to_string()))
+        Err(_) => return (StatusCode::FORBIDDEN, "Wrong username or password".to_string())
     };
 
     if !user.verify_password(password) {
-        return Ok(build_response(403, "Wrong username or password".to_string()));
+        return (StatusCode::FORBIDDEN, "Wrong username or password".to_string());
     }
 
-    let token = build_jwt(user.username)?;
+    let token = build_jwt(user.username).unwrap();
 
-    Ok(build_response(200, token))
+    (StatusCode::OK, token)
 }
 
-fn build_response(status_code: u16, message: String) -> Response<Body> {
-    Response::builder()
-        .status(status_code)
-        .header("content-type", "text/html")
-        .body(message.into())
-        .map_err(Box::new)
-        .unwrap()
-}
-
-#[tokio::main]
-async fn main() -> Result<(), Error> {
-    dotenv::dotenv().ok();
-    // required to enable CloudWatch error logging by the runtime
-    tracing::init_default_subscriber();
-
+async fn get_dynamodb_client() -> Client {
     //Get config from environment.
     let config = aws_config::defaults(BehaviorVersion::latest())
         .test_credentials()
@@ -60,10 +65,18 @@ async fn main() -> Result<(), Error> {
         .build();
 
     //Create the DynamoDB client.
-    let client = Client::from_conf(dynamodb_local_config);
+    Client::from_conf(dynamodb_local_config)
+}
 
-    run(service_fn(|event: Request| async {
-        handle_request(&client, event).await
-    }))
-    .await
+#[tokio::main]
+async fn main() -> Result<(), Error> {
+    // required to enable CloudWatch error logging by the runtime
+    //tracing::init_default_subscriber();
+
+    let app = Router::new()
+        .route("/login", get(get_login).post(post_login));
+
+    let _ = run(app).await;
+
+    Ok(())
 }
