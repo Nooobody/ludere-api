@@ -1,0 +1,23 @@
+[package]
+name = "ludereapi"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+argon2 = "0.5.3"
+aws-config = "1.5.4"
+aws-sdk-dynamodb = "1.39.1"
+axum = "0.7.5"
+dotenv = "0.15.0"
+hmac = "0.12.1"
+jwt = "0.16.0"
+lambda_http = "0.13.0"
+rand = "0.8.5"
+rand_core = "0.6.4"
+serde = "1.0.204"
+serde_dynamo = "4.2.14"
+serde_json = "1.0.121"
+sha2 = "0.10.8"
+tokio = "1.39.2"
