@@ -18,7 +18,7 @@ pub struct User {
 }
 
 impl User {
-    pub fn verify_password(&self, password: String) -> Result<bool, APIError> {
+    pub fn verify_password(&self, password: String) -> Result<(), APIError> {
         if password.is_empty() {
             return Err(wrong_username_or_password());
         }
@@ -27,7 +27,7 @@ impl User {
         let is_ok = Argon2::default().verify_password(password.as_bytes(), &hash).is_ok();
 
         match is_ok {
-            true => Ok(true),
+            true => Ok(()),
             false => Err(wrong_username_or_password())
         }
     }
@@ -63,7 +63,7 @@ pub async fn try_get_user(client: &Client, username: String) -> Result<User, API
         Err(e) if e.code() == Some("ResourceNotFoundException") => {
             Err(table_does_not_exist())
         },
-        Err(e) if e.code() == None => {
+        Err(e) if e.code().is_none() => {
             //Err(no_connection_to_database())
             Ok(User {
                 username: "Asdf".to_string(),

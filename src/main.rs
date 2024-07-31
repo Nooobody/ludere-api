@@ -3,7 +3,7 @@ use std::env;
 
 use aws_config::BehaviorVersion;
 use aws_sdk_dynamodb::Client;
-use axum::{routing::get, extract::Query , Json, Router};
+use axum::{extract::{Query, Request}, http::header, middleware::{self, Next}, response::Response, routing::{get, post}, Json, Router};
 use lambda_http::{run, Error};
 //use lambda_http::tracing::{self};
 
@@ -13,8 +13,8 @@ pub mod apierror;
 
 use serde::Deserialize;
 use storeuser::try_get_user;
-use jwt::try_build_jwt;
-use apierror::APIError;
+use jwt::{try_build_jwt, try_verify_jwt};
+use apierror::{access_denied, APIError};
 
 #[derive(Deserialize)]
 struct LoginPayload {
@@ -63,13 +63,37 @@ async fn get_dynamodb_client() -> Client {
     Client::from_conf(dynamodb_local_config)
 }
 
+async fn post_ping() {}
+
+async fn check_jwt(req: Request, next: Next) -> Result<Response, APIError> {
+    //let () = req.into_parts();
+    let auth_header = match req.headers().get(header::AUTHORIZATION) {
+        Some(header) => header,
+        _ => return Err(access_denied())
+    };
+
+    let jwt = match auth_header.to_str() {
+        Ok(jwt) => jwt.split(' ').last().unwrap().to_string(),
+        Err(_) => return Err(access_denied())
+    };
+
+    try_verify_jwt(jwt)?;
+
+    Ok(next.run(req).await)
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     // required to enable CloudWatch error logging by the runtime
     //tracing::init_default_subscriber();
 
+    let protected = Router::new()
+        .route("/ping", post(post_ping))
+        .layer(middleware::from_fn(check_jwt));
+
     let app = Router::new()
-        .route("/login", get(get_login).post(post_login));
+        .route("/login", get(get_login).post(post_login))
+        .nest("/admin", protected);
 
     let _ = run(app).await;
 

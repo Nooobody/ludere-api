@@ -18,3 +18,7 @@ pub fn table_does_not_exist() -> APIError {
 pub fn no_connection_to_database() -> APIError {
     (StatusCode::SERVICE_UNAVAILABLE, "No connection to database".to_string())
 }
+
+pub fn access_denied() -> APIError {
+    (StatusCode::UNAUTHORIZED, "Access denied".to_string())
+}
