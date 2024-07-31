@@ -1,19 +1,20 @@
 
-
 use std::env;
 
 use aws_config::BehaviorVersion;
 use aws_sdk_dynamodb::Client;
-use axum::{http::StatusCode, routing::get, extract::Query , Json, Router};
+use axum::{routing::get, extract::Query , Json, Router};
 use lambda_http::{run, Error};
 //use lambda_http::tracing::{self};
 
 pub mod storeuser;
 pub mod jwt;
+pub mod apierror;
 
 use serde::Deserialize;
 use storeuser::try_get_user;
-use jwt::build_jwt;
+use jwt::try_build_jwt;
+use apierror::APIError;
 
 #[derive(Deserialize)]
 struct LoginPayload {
@@ -21,34 +22,28 @@ struct LoginPayload {
     password: String
 }
 
-async fn post_login(Json(payload): Json<LoginPayload>) -> (StatusCode, String) {
+async fn post_login(Json(payload): Json<LoginPayload>) -> Result<String, APIError> {
     let username = payload.username;
     let password = payload.password;
 
     verify_login(username, password).await
 }
 
-async fn get_login(payload: Query<LoginPayload>) -> (StatusCode, String) {
+async fn get_login(payload: Query<LoginPayload>) -> Result<String, APIError> {
     let username = payload.0.username;
     let password = payload.0.password;
     verify_login(username, password).await
 }
 
-async fn verify_login(username: String, password: String) -> (StatusCode, String) {
+async fn verify_login(username: String, password: String) -> Result<String, APIError> {
     let client = get_dynamodb_client().await;
 
-    let user = match try_get_user(&client, username).await {
-        Ok(user) => user,
-        Err(_) => return (StatusCode::FORBIDDEN, "Wrong username or password".to_string())
-    };
+    let user = try_get_user(&client, username).await?;
+    user.verify_password(password)?;
 
-    if !user.verify_password(password) {
-        return (StatusCode::FORBIDDEN, "Wrong username or password".to_string());
-    }
+    let token = try_build_jwt(user.username)?;
 
-    let token = build_jwt(user.username).unwrap();
-
-    (StatusCode::OK, token)
+    Ok(token)
 }
 
 async fn get_dynamodb_client() -> Client {

@@ -4,10 +4,12 @@ use argon2::password_hash::{
     PasswordVerifier
 };
 use argon2::Argon2;
-use aws_sdk_dynamodb::types::error::builders::IndexNotFoundExceptionBuilder;
+use aws_sdk_dynamodb::error::ProvideErrorMetadata;
 use aws_sdk_dynamodb::types::AttributeValue;
 use aws_sdk_dynamodb::{Error, Client};
 use serde::{Deserialize, Serialize};
+
+use crate::apierror::{internal_server_error, table_does_not_exist, wrong_username_or_password, APIError};
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct User {
@@ -16,13 +18,18 @@ pub struct User {
 }
 
 impl User {
-    pub fn verify_password(&self, password: String) -> bool {
+    pub fn verify_password(&self, password: String) -> Result<bool, APIError> {
         if password.is_empty() {
-            return false;
+            return Err(wrong_username_or_password());
         }
 
         let hash = PasswordHash::new(&self.password).unwrap();
-        Argon2::default().verify_password(password.as_bytes(), &hash).is_ok()
+        let is_ok = Argon2::default().verify_password(password.as_bytes(), &hash).is_ok();
+
+        match is_ok {
+            true => Ok(true),
+            false => Err(wrong_username_or_password())
+        }
     }
 }
 
@@ -45,30 +52,24 @@ async fn get_user(client: &Client, username: String) -> Result<User, Error> {
     }
 }
 
-pub async fn try_get_user(client: &Client, username: String) -> Result<User, Error> {
+pub async fn try_get_user(client: &Client, username: String) -> Result<User, APIError> {
     if username.is_empty() {
-        return Err(
-            Error::IndexNotFoundException(
-                IndexNotFoundExceptionBuilder::default()
-                    .set_message(Some( "Wrong username or password".to_string()))
-                    .build()
-            )
-        )
+        return Err(wrong_username_or_password())
     }
 
     match get_user(client, username).await {
         Ok(user) if !user.username.is_empty() => Ok(user),
-        Ok(_user) => Err(
-            Error::IndexNotFoundException(
-                IndexNotFoundExceptionBuilder::default()
-                    .set_message(Some( "Wrong username or password".to_string()))
-                    .build()
-            )
-        ),
-        //Err(e) => Err(e)
-        Err(_) => Ok(User {
-            username: "Asdf".to_string(),
-            password: "$argon2i$v=19$m=16,t=2,p=1$YXNkZmFzZGY$AYo4g2O8+H79T1Z/rQQ7Lg".to_string()
-        })
+        Ok(_) => Err(wrong_username_or_password()),
+        Err(e) if e.code() == Some("ResourceNotFoundException") => {
+            Err(table_does_not_exist())
+        },
+        Err(e) if e.code() == None => {
+            //Err(no_connection_to_database())
+            Ok(User {
+                username: "Asdf".to_string(),
+                password: "$argon2i$v=19$m=16,t=2,p=1$YXNkZmFzZGY$AYo4g2O8+H79T1Z/rQQ7Lg".to_string()
+            })
+        }
+        Err(_) => Err(internal_server_error())
     }
 }
